@@ -1,8 +1,22 @@
-import { app, BrowserWindow, dialog, ipcMain, protocol } from 'electron';
-import type { OpenDialogOptions } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, Menu, protocol } from 'electron';
+import type { MenuItemConstructorOptions, OpenDialogOptions } from 'electron';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import type { AutocompleteSettings } from '../src/types';
+import {
+  getAutocompleteConfig,
+  getAutocompleteHealth,
+  listAutocompleteModels,
+  setAutocompleteSettings,
+  suggestAutocomplete
+} from './autocomplete';
+import {
+  DEFAULT_AUTOCOMPLETE_SETTINGS,
+  loadAutocompleteSettings,
+  mergeAutocompleteSettings,
+  saveAutocompleteSettings
+} from './autocompleteSettings';
 import { scanDatasetFolder, type ScanMode } from './datasetScanner';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -23,6 +37,9 @@ protocol.registerSchemesAsPrivileged([
 
 let mainWindow: BrowserWindow | null = null;
 let initialFolder: string | null = null;
+let autocompleteSettingsPath: string | null = null;
+let autocompleteSettings = DEFAULT_AUTOCOMPLETE_SETTINGS;
+const autocompleteControllers = new Map<number, AbortController>();
 
 function parseCandidateFolder(argv: string[]): string | null {
   const args = app.isPackaged ? argv.slice(1) : argv.slice(2);
@@ -63,6 +80,7 @@ function createWindow(): void {
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,
+      spellcheck: true,
       devTools: true,
       preload: path.join(__dirname, 'preload.mjs')
     }
@@ -84,6 +102,58 @@ function createWindow(): void {
       event.preventDefault();
       mainWindow?.webContents.toggleDevTools();
     }
+  });
+
+  mainWindow.webContents.on('context-menu', (_event, params) => {
+    const template: MenuItemConstructorOptions[] = [];
+    const hasSuggestions = params.misspelledWord && params.dictionarySuggestions.length > 0;
+
+    if (hasSuggestions) {
+      for (const suggestion of params.dictionarySuggestions.slice(0, 8)) {
+        template.push({
+          label: suggestion,
+          click: () => {
+            mainWindow?.webContents.replaceMisspelling(suggestion);
+          }
+        });
+      }
+    } else if (params.misspelledWord) {
+      template.push({
+        label: 'No spelling suggestions',
+        enabled: false
+      });
+    }
+
+    if (params.misspelledWord) {
+      template.push({
+        label: 'Add to Dictionary',
+        click: () => {
+          mainWindow?.webContents.session.addWordToSpellCheckerDictionary(params.misspelledWord);
+        }
+      });
+      template.push({ type: 'separator' });
+    }
+
+    if (params.isEditable) {
+      template.push(
+        { role: 'undo' },
+        { role: 'redo' },
+        { type: 'separator' },
+        { role: 'cut' },
+        { role: 'copy' },
+        { role: 'paste' },
+        { role: 'selectAll' }
+      );
+    } else {
+      template.push({ role: 'copy' }, { role: 'selectAll' });
+    }
+
+    if (template.length === 0) {
+      return;
+    }
+
+    const menu = Menu.buildFromTemplate(template);
+    menu.popup({ window: mainWindow ?? undefined });
   });
 
   mainWindow.on('closed', () => {
@@ -127,6 +197,72 @@ function registerIpcHandlers(): void {
 
     await fs.writeFile(req.txtPath, req.text ?? '', 'utf8');
   });
+
+  ipcMain.handle('autocomplete:config', () => {
+    return getAutocompleteConfig();
+  });
+
+  ipcMain.handle('autocomplete:get-settings', () => {
+    return autocompleteSettings;
+  });
+
+  ipcMain.handle('autocomplete:update-settings', async (_event, updates: Partial<AutocompleteSettings>) => {
+    autocompleteSettings = mergeAutocompleteSettings(autocompleteSettings, updates);
+    setAutocompleteSettings(autocompleteSettings);
+
+    if (autocompleteSettingsPath) {
+      await saveAutocompleteSettings(autocompleteSettingsPath, autocompleteSettings);
+    }
+
+    return autocompleteSettings;
+  });
+
+  ipcMain.handle('autocomplete:reset-settings', async () => {
+    autocompleteSettings = DEFAULT_AUTOCOMPLETE_SETTINGS;
+    setAutocompleteSettings(autocompleteSettings);
+
+    if (autocompleteSettingsPath) {
+      await saveAutocompleteSettings(autocompleteSettingsPath, autocompleteSettings);
+    }
+
+    return autocompleteSettings;
+  });
+
+  ipcMain.handle('autocomplete:health', async () => {
+    return getAutocompleteHealth();
+  });
+
+  ipcMain.handle('autocomplete:list-models', async () => {
+    return listAutocompleteModels();
+  });
+
+  ipcMain.handle(
+    'autocomplete:suggest',
+    async (
+      event,
+      req: {
+        text: string;
+        cursorIndex: number;
+        language: 'en';
+        maxTokens?: number;
+      }
+    ) => {
+      const senderId = event.sender.id;
+      const previous = autocompleteControllers.get(senderId);
+      previous?.abort();
+
+      const controller = new AbortController();
+      autocompleteControllers.set(senderId, controller);
+
+      try {
+        return await suggestAutocomplete(req, controller.signal);
+      } finally {
+        if (autocompleteControllers.get(senderId) === controller) {
+          autocompleteControllers.delete(senderId);
+        }
+      }
+    }
+  );
 }
 
 app.whenReady().then(async () => {
@@ -154,6 +290,10 @@ app.whenReady().then(async () => {
       return new Response('Unable to read dataset image', { status: 400 });
     }
   });
+
+  autocompleteSettingsPath = path.join(app.getPath('userData'), 'autocomplete-settings.json');
+  autocompleteSettings = await loadAutocompleteSettings(autocompleteSettingsPath);
+  setAutocompleteSettings(autocompleteSettings);
 
   initialFolder = await resolveInitialFolder(process.argv);
   registerIpcHandlers();
