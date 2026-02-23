@@ -1,4 +1,5 @@
 export type ScanMode = 'recursive' | 'top-level';
+export type AppFlow = 'dataset-editor' | 'image-convert';
 
 export interface DatasetItem {
   id: string;
@@ -19,6 +20,49 @@ export interface ScanRequest {
 export interface SaveTextRequest {
   txtPath: string;
   text: string;
+}
+
+export type ImageScanMode = 'recursive';
+
+export interface ImageItem {
+  id: string;
+  sourcePath: string;
+  sourceUrl: string;
+  relDir: string;
+  baseName: string;
+  ext: string;
+}
+
+export interface CropRectNormalized {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+export interface ScanImagesRequest {
+  folder: string;
+  mode: ImageScanMode;
+}
+
+export interface ConvertImagesRequest {
+  folder: string;
+  maxSize: number;
+  crops: Record<string, CropRectNormalized | null>;
+}
+
+export interface ConvertFailure {
+  sourcePath: string;
+  message: string;
+}
+
+export interface ConvertImagesResult {
+  total: number;
+  succeeded: number;
+  failed: number;
+  outputRoot: string;
+  failures: ConvertFailure[];
+  warnings: string[];
 }
 
 export interface AutocompleteRequest {

@@ -3,7 +3,9 @@ import { insertCompletionAtCursor } from './lib/autocomplete';
 import { createDebouncedPerKeySaver } from './lib/debounce';
 import { suggestLocalCompletion } from './lib/localAutocomplete';
 import { clampIndex, parseOneBasedJump } from './lib/pagination';
+import ImageConvertFlow from './ImageConvertFlow';
 import type {
+  AppFlow,
   AutocompleteHealth,
   AutocompleteResponse,
   AutocompleteSettings,
@@ -25,6 +27,7 @@ interface SuggestionState {
 
 function App() {
   const [view, setView] = useState<View>('loading');
+  const [flow, setFlow] = useState<AppFlow>('dataset-editor');
   const [folder, setFolder] = useState<string | null>(null);
   const [mode, setMode] = useState<ScanMode>('recursive');
   const [items, setItems] = useState<DatasetItem[]>([]);
@@ -70,6 +73,12 @@ function App() {
       }
     };
   }, []);
+
+  useEffect(() => {
+    if (flow === 'image-convert') {
+      clearSuggestion();
+    }
+  }, [clearSuggestion, flow]);
 
   const refreshAutocompleteHealth = useCallback(async () => {
     const health = await window.datasetApi.autocompleteHealth();
@@ -466,7 +475,7 @@ function App() {
 
   useEffect(() => {
     const keydownHandler = (event: KeyboardEvent) => {
-      if (event.key !== 'PageDown' || items.length === 0) {
+      if (flow !== 'dataset-editor' || event.key !== 'PageDown' || items.length === 0) {
         return;
       }
 
@@ -476,10 +485,10 @@ function App() {
 
     window.addEventListener('keydown', keydownHandler, { passive: false });
     return () => window.removeEventListener('keydown', keydownHandler);
-  }, [currentIndex, goToIndex, items.length]);
+  }, [currentIndex, flow, goToIndex, items.length]);
 
   useEffect(() => {
-    if (items.length === 0) {
+    if (flow !== 'dataset-editor' || items.length === 0) {
       return;
     }
 
@@ -521,7 +530,7 @@ function App() {
       observer.disconnect();
       window.removeEventListener('scroll', updateNearest);
     };
-  }, [items.length]);
+  }, [flow, items.length]);
 
   const totalItems = items.length;
   const autocompleteAvailable = Boolean(autocompleteSettings?.enabled && autocompleteHealth?.ok);
@@ -563,6 +572,15 @@ function App() {
       </main>
     );
   }
+  if (flow === 'image-convert') {
+    return (
+      <ImageConvertFlow
+        folder={folder}
+        onSwitchFlow={setFlow}
+        onChangeFolder={handleFolderPick}
+      />
+    );
+  }
 
   return (
     <main className="app-shell">
@@ -571,6 +589,25 @@ function App() {
           {folder}
         </div>
         <div className="toolbar-controls">
+          <div className="flow-tabs" role="tablist" aria-label="App flow mode">
+            <button
+              type="button"
+              role="tab"
+              aria-selected
+              className="flow-tab is-active"
+            >
+              Dataset Editor
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={false}
+              className="flow-tab"
+              onClick={() => setFlow('image-convert')}
+            >
+              Image Convert
+            </button>
+          </div>
           <label htmlFor="scan-mode">Scan mode</label>
           <select
             id="scan-mode"
@@ -1019,3 +1056,10 @@ function App() {
 }
 
 export default App;
+
+
+
+
+
+
+

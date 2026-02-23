@@ -5,8 +5,12 @@ import type {
   AutocompleteResponse,
   AutocompleteRuntimeConfig,
   AutocompleteSettings,
+  ConvertImagesRequest,
+  ConvertImagesResult,
   DatasetItem,
+  ImageItem,
   SaveTextRequest,
+  ScanImagesRequest,
   ScanRequest
 } from '../src/types';
 
@@ -15,6 +19,8 @@ export interface DatasetBridge {
   selectFolder: () => Promise<string | null>;
   scanDataset: (req: ScanRequest) => Promise<DatasetItem[]>;
   saveText: (req: SaveTextRequest) => Promise<void>;
+  scanImages: (req: ScanImagesRequest) => Promise<ImageItem[]>;
+  convertImages: (req: ConvertImagesRequest) => Promise<ConvertImagesResult>;
   autocompleteSuggest: (req: AutocompleteRequest) => Promise<AutocompleteResponse>;
   autocompleteHealth: () => Promise<AutocompleteHealth>;
   autocompleteConfig: () => Promise<AutocompleteRuntimeConfig>;
@@ -29,6 +35,8 @@ const bridge: DatasetBridge = {
   selectFolder: () => ipcRenderer.invoke('dialog:select-folder'),
   scanDataset: (req) => ipcRenderer.invoke('dataset:scan', req),
   saveText: (req) => ipcRenderer.invoke('dataset:save-text', req),
+  scanImages: (req) => ipcRenderer.invoke('images:scan', req),
+  convertImages: (req) => ipcRenderer.invoke('images:convert', req),
   autocompleteSuggest: (req) => ipcRenderer.invoke('autocomplete:suggest', req),
   autocompleteHealth: () => ipcRenderer.invoke('autocomplete:health'),
   autocompleteConfig: () => ipcRenderer.invoke('autocomplete:config'),

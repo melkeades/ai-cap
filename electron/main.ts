@@ -2,8 +2,9 @@ import { app, BrowserWindow, dialog, ipcMain, Menu, protocol } from 'electron';
 import type { MenuItemConstructorOptions, OpenDialogOptions } from 'electron';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
+import sharp from 'sharp';
 import { fileURLToPath } from 'node:url';
-import type { AutocompleteSettings } from '../src/types';
+import type { AutocompleteSettings, ConvertImagesRequest, ScanImagesRequest } from '../src/types';
 import {
   getAutocompleteConfig,
   getAutocompleteHealth,
@@ -17,6 +18,8 @@ import {
   mergeAutocompleteSettings,
   saveAutocompleteSettings
 } from './autocompleteSettings';
+import { convertImagesInFolder } from './imageConverter';
+import { scanImageFolder } from './imageScanner';
 import { scanDatasetFolder, type ScanMode } from './datasetScanner';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -66,6 +69,22 @@ async function resolveInitialFolder(argv: string[]): Promise<string | null> {
     return stat.isDirectory() ? candidate : null;
   } catch {
     return null;
+  }
+}
+
+function getContentTypeForExtension(extension: string): string {
+  switch (extension) {
+    case '.png':
+      return 'image/png';
+    case '.jpg':
+    case '.jpeg':
+      return 'image/jpeg';
+    case '.gif':
+      return 'image/gif';
+    case '.webp':
+      return 'image/webp';
+    default:
+      return 'application/octet-stream';
   }
 }
 
@@ -198,6 +217,22 @@ function registerIpcHandlers(): void {
     await fs.writeFile(req.txtPath, req.text ?? '', 'utf8');
   });
 
+  ipcMain.handle('images:scan', async (_event, req: ScanImagesRequest) => {
+    if (!req?.folder) {
+      throw new Error('No folder provided for image scan.');
+    }
+
+    return scanImageFolder(req.folder, req.mode ?? 'recursive');
+  });
+
+  ipcMain.handle('images:convert', async (_event, req: ConvertImagesRequest) => {
+    if (!req?.folder) {
+      throw new Error('No folder provided for image conversion.');
+    }
+
+    return convertImagesInFolder(req);
+  });
+
   ipcMain.handle('autocomplete:config', () => {
     return getAutocompleteConfig();
   });
@@ -270,16 +305,35 @@ app.whenReady().then(async () => {
     try {
       const requestUrl = new URL(request.url);
       const decodedPath = requestUrl.searchParams.get('path') ?? '';
+      const firstFrame = requestUrl.searchParams.get('firstFrame') === '1';
 
       if (!path.isAbsolute(decodedPath)) {
         return new Response('Invalid dataset path', { status: 400 });
       }
 
-      const buffer = await fs.readFile(decodedPath);
       const extension = path.extname(decodedPath).toLowerCase();
-      const contentType = extension === '.webp' ? 'image/webp' : 'application/octet-stream';
+      if (firstFrame && extension === '.gif') {
+        const firstFrameBuffer = await sharp(decodedPath, {
+          animated: true,
+          pages: 1,
+          page: 0
+        })
+          .png()
+          .toBuffer();
 
-      return new Response(buffer, {
+        return new Response(new Uint8Array(firstFrameBuffer), {
+          status: 200,
+          headers: {
+            'content-type': 'image/png',
+            'cache-control': 'no-cache'
+          }
+        });
+      }
+
+      const buffer = await fs.readFile(decodedPath);
+      const contentType = getContentTypeForExtension(extension);
+
+      return new Response(new Uint8Array(buffer), {
         status: 200,
         headers: {
           'content-type': contentType,
@@ -311,3 +365,7 @@ app.on('window-all-closed', () => {
     app.quit();
   }
 });
+
+
+
+
